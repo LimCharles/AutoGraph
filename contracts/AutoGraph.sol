@@ -60,6 +60,11 @@ contract AutoGraph is ERC20 {
         _;
     }
 
+    modifier notServiceDenied(uint256 carId) {
+        require(!carDenialStatus[carId], "Service is denied for this car");
+        _;
+    }
+
    
     // Events
     event CarPurchased(address buyer, uint256 carId);
@@ -94,7 +99,8 @@ contract AutoGraph is ERC20 {
     }
 
     // Dealership Functions
-    function registerCar(uint carId, string memory model) public onlyDealership {
+    function registerCar(uint256 carId, string memory model) public onlyDealership {
+        require(carRegistry[carId].id == 0, "Car ID already in use");
         Car storage newCar = carRegistry[carId];
         newCar.id = carId;
         newCar.model = model;
@@ -102,12 +108,13 @@ contract AutoGraph is ERC20 {
         newCar.remainingServiceBalance = 0;
     }
 
-    function registerOwner(uint carId, address owner) public onlyDealership {
+    // why are there two registerowner functions pala
+    function registerOwner(uint256 carId, address owner) public onlyDealership {
         carRegistry[carId].currentOwner = owner;
     }
 
     // Consumer functions
-    function payServiceBalance() external payable onlyCarOwner() {
+    function payServiceBalance(uint256 carId) external payable onlyCarOwner() {
         require(carRegistry[carId].currentOwner == msg.sender, "You are not the owner of this car");
         require(carRegistry[carId].remainingServiceBalance > 0, "No remaining service balance to pay");
         require(msg.value >= carRegistry[carId].remainingServiceBalance, "Insufficient funds to pay service balance");
@@ -117,14 +124,13 @@ contract AutoGraph is ERC20 {
 
     function performMaintenance(uint256 carId, string memory maintenance) public notServiceDenied(carId){
         require(carRegistry[carId].currentOwner == msg.sender, "You are not the owner of this car");
-        
-        require(carRegistry[carId].remainingServiceBalance == 0, "Pay remaining service balance first");
+        // require(carRegistry[carId].remainingServiceBalance == 0, "Pay remaining service balance first");
         carRegistry[carId].records.push(ServiceRecord({
         carId: carId,
         date: block.timestamp,
         serviceDetails: maintenance
         }));
-        carRegistry[carId].remainingServiceBalance = 500 wei; // service fee (change to make dynamic)
+        carRegistry[carId].remainingServiceBalance += 500 wei; // change if needed
         emit CarServiced(carId, block.timestamp, maintenance);
     }
 
@@ -132,11 +138,12 @@ contract AutoGraph is ERC20 {
     function repairCarAndAddToBlockchain(uint256 carId, string memory serviceDetails) public onlyServiceCenter {
         // Ensure only authorized service centers can call this
         // Add service record to the blockchain
-        CarRegistry[carId].records.push(ServiceRecord({
+        carRegistry[carId].records.push(ServiceRecord({
         carId: carId,
         date: block.timestamp,
         serviceDetails: serviceDetails
         }));
+        carRegistry[carId].remainingServiceBalance += 500 wei; // change if needed
         emit CarServiced(carId, block.timestamp, serviceDetails);
     }
 
@@ -146,23 +153,22 @@ contract AutoGraph is ERC20 {
         require(carRegistry[carId].remainingServiceBalance > 0, "No remaining service balance to deny");
         address owner = carRegistry[carId].currentOwner;
         uint256 ownerBalance = carOwners[owner].tokenBalance;
-        require(ownerBalance < 100, "Owner has insufficient balance for service"); //change balance value
+        require(ownerBalance < 500, "Owner has sufficient balance for service"); //change balance value
         carDenialStatus[carId] = true;
         emit CarServiced(carId, block.timestamp, "Service denied due to low balance");
     }
 
     // Dealership functions
-    function registerCarFromManufacturer(uint256 id, string memory model) public onlyDealership {
+    function registerCarFromManufacturer(uint256 carId, string memory model) public onlyDealership {
         // Ensure only authorized dealerships can call this
         // Add car to registry
-        require(carRegistry[id].id == 0, "Car ID already in use");
-
-        Car storage newCar = carRegistry[id];
-    newCar.id = id;
-    newCar.model = model;
-    newCar.currentOwner = address(0);
-    newCar.remainingServiceBalance = 0;
-
+        require(carRegistry[carId].id == 0, "Car ID already in use");
+        Car storage newCar = carRegistry[carId];
+        newCar.id = carId;
+        newCar.model = model;
+        newCar.currentOwner = address(0);
+        newCar.remainingServiceBalance = 0;
+        emit CarPurchased(address(0), id);
     }
 
     function grantDiscount(address consumer, uint256 discountAmount) public {
