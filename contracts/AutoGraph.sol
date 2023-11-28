@@ -11,16 +11,19 @@ contract AutoGraph is ERC20 {
     mapping(address => bool) public isDealership;
     mapping(address => bool) public isThirdPartyAuditor;
     mapping(address => bool) public isAdmin;
+    mapping(uint256 => bool) public carDenialStatus;
 
     // Structs to store car and service data
     struct CarOwner {
         string name;
+        uint tokenBalance;
     }
 
     struct Car {
         uint256 id;
         string model;
         address currentOwner;
+        uint remainingServiceBalance;
         CarOwner[] owners;
         ServiceRecord[] records;
     }
@@ -32,6 +35,11 @@ contract AutoGraph is ERC20 {
     }
 
     // Modifiers
+    modifier onlyCarOwner() {
+        require(carOwners[msg.sender].name != "", "Caller is not a registered car owner");
+        _;
+    }
+
     modifier onlyServiceCenter() {
         require(isServiceCenter[msg.sender], "Caller is not a registered service center");
         _;
@@ -52,6 +60,7 @@ contract AutoGraph is ERC20 {
         _;
     }
 
+   
     // Events
     event CarPurchased(address buyer, uint256 carId);
     event CarServiced(uint256 carId, uint256 date, string serviceDetails);
@@ -90,6 +99,7 @@ contract AutoGraph is ERC20 {
         newCar.id = carId;
         newCar.model = model;
         newCar.currentOwner = address(0);
+        newCar.remainingServiceBalance = 0;
     }
 
     function registerOwner(uint carId, address owner) public onlyDealership {
@@ -97,29 +107,62 @@ contract AutoGraph is ERC20 {
     }
 
     // Consumer functions
+    function payServiceBalance() external payable onlyCarOwner() {
+        require(carRegistry[carId].currentOwner == msg.sender, "You are not the owner of this car");
+        require(carRegistry[carId].remainingServiceBalance > 0, "No remaining service balance to pay");
+        require(msg.value >= carRegistry[carId].remainingServiceBalance, "Insufficient funds to pay service balance");
+        carRegistry[carId].remainingServiceBalance = 0;
+        emit CarServiced(carId, block.timestamp, "Service payment received");
+    }
 
-    function performMaintenance(uint256 carId) public {
-        // Check if the car is owned by the sender
-        // Check if the car is not denied service
-        // Deduct tokens and record service
+    function performMaintenance(uint256 carId, string memory maintenance) public notServiceDenied(carId){
+        require(carRegistry[carId].currentOwner == msg.sender, "You are not the owner of this car");
+        
+        require(carRegistry[carId].remainingServiceBalance == 0, "Pay remaining service balance first");
+        carRegistry[carId].records.push(ServiceRecord({
+        carId: carId,
+        date: block.timestamp,
+        serviceDetails: maintenance
+        }));
+        carRegistry[carId].remainingServiceBalance = 500 wei; // service fee (change to make dynamic)
+        emit CarServiced(carId, block.timestamp, maintenance);
     }
 
     // Service Center functions
-    function repairCarAndAddToBlockchain(uint256 carId, string memory serviceDetails) public {
+    function repairCarAndAddToBlockchain(uint256 carId, string memory serviceDetails) public onlyServiceCenter {
         // Ensure only authorized service centers can call this
         // Add service record to the blockchain
+        CarRegistry[carId].records.push(ServiceRecord({
+        carId: carId,
+        date: block.timestamp,
+        serviceDetails: serviceDetails
+        }));
         emit CarServiced(carId, block.timestamp, serviceDetails);
     }
 
-    function denyServiceToLowBalance(uint256 carId) public {
+    function denyServiceToLowBalance(uint256 carId) public onlyServiceCenter {
         // Ensure only authorized service centers can call this
-        // Update car's service denial status
+        // Update car's service denial status   
+        require(carRegistry[carId].remainingServiceBalance > 0, "No remaining service balance to deny");
+        address owner = carRegistry[carId].currentOwner;
+        uint256 ownerBalance = carOwners[owner].tokenBalance;
+        require(ownerBalance < 100, "Owner has insufficient balance for service"); //change balance value
+        carDenialStatus[carId] = true;
+        emit CarServiced(carId, block.timestamp, "Service denied due to low balance");
     }
 
     // Dealership functions
-    function registerCarFromManufacturer(uint256 id, string memory model) public {
+    function registerCarFromManufacturer(uint256 id, string memory model) public onlyDealership {
         // Ensure only authorized dealerships can call this
         // Add car to registry
+        require(carRegistry[id].id == 0, "Car ID already in use");
+
+        Car storage newCar = carRegistry[id];
+    newCar.id = id;
+    newCar.model = model;
+    newCar.currentOwner = address(0);
+    newCar.remainingServiceBalance = 0;
+
     }
 
     function grantDiscount(address consumer, uint256 discountAmount) public {
